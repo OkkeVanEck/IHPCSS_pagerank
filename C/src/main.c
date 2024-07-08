@@ -81,29 +81,29 @@ void calculate_pagerank(double pagerank[])
 
         // ???: this performs terribly for sparse graphs, which I think "sneaky_graph" will actually make
         // also no consideration for data locality
-		for(int i = 0; i < GRAPH_ORDER; i++)
+        for(int i = 0; i < GRAPH_ORDER; i++)
         {
-			for(int j = 0; j < GRAPH_ORDER; j++)
+            for(int j = 0; j < GRAPH_ORDER; j++)
             {
-				if (adjacency_matrix[j][i] == 1.0)
+                if (adjacency_matrix[j][i] == 1.0)
                 {
-					int outdegree = 0;
+                    int outdegree = 0;
 
                     /*
                      * OPT: this loop can be done ahead of time
                      * All we want here is the outdegree of node j to get the weighted average
                      */
-					for(int k = 0; k < GRAPH_ORDER; k++)
+                    for(int k = 0; k < GRAPH_ORDER; k++)
                     {
-						if (adjacency_matrix[j][k] == 1.0)
+                        if (adjacency_matrix[j][k] == 1.0)
                         {
-							outdegree++;
-						}
-					}
-					new_pagerank[i] += pagerank[j] / (double)outdegree; // OPT: lookup table for 1.0/int
-				}
-			}
-		}
+                            outdegree++;
+                        }
+                    }
+                    new_pagerank[i] += pagerank[j] / (double)outdegree; // OPT: lookup table for 1.0/int
+                }
+            }
+        }
 
         // OPT: parallelize
         for(int i = 0; i < GRAPH_ORDER; i++)
@@ -138,10 +138,10 @@ void calculate_pagerank(double pagerank[])
             printf("[ERROR] Iteration %zu: sum of all pageranks is not 1 but %.12f.\n", iteration, pagerank_total);
         }
  
-		double iteration_end = omp_get_wtime();
-		elapsed = omp_get_wtime() - start;
-		iteration++;
-		time_per_iteration = elapsed / iteration;
+        double iteration_end = omp_get_wtime();
+        elapsed = omp_get_wtime() - start;
+        iteration++;
+        time_per_iteration = elapsed / iteration;
     }
     
     printf("%zu iterations achieved in %.2f seconds\n", iteration, elapsed);
