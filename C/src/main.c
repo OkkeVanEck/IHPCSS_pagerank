@@ -24,7 +24,7 @@
  * will be 1.0. The absence of edge is represented with value 0.0.
  * Redundant edges are still represented with value 1.0.
  */
-double adjacency_matrix[GRAPH_ORDER][GRAPH_ORDER];
+double adjacency_matrix[GRAPH_ORDER][GRAPH_ORDER]; // OPT: use bool instead of double
 double max_diff = 0.0;
 double min_diff = 1.0;
 double total_diff = 0.0;
@@ -61,6 +61,8 @@ void calculate_pagerank(double pagerank[])
     double elapsed = omp_get_wtime() - start;
     double time_per_iteration = 0;
     double new_pagerank[GRAPH_ORDER];
+
+    // OPT: memset / paralleize
     for(int i = 0; i < GRAPH_ORDER; i++)
     {
         new_pagerank[i] = 0.0;
@@ -70,12 +72,15 @@ void calculate_pagerank(double pagerank[])
     while(elapsed < MAX_TIME && (elapsed + time_per_iteration) < MAX_TIME)
     {
         double iteration_start = omp_get_wtime();
- 
+
+        // OPT: memset / parallelize
         for(int i = 0; i < GRAPH_ORDER; i++)
         {
             new_pagerank[i] = 0.0;
         }
- 
+
+        // ???: this performs terribly for sparse graphs, which I think "sneaky_graph" will actually make
+        // also no consideration for data locality
 		for(int i = 0; i < GRAPH_ORDER; i++)
         {
 			for(int j = 0; j < GRAPH_ORDER; j++)
@@ -83,7 +88,11 @@ void calculate_pagerank(double pagerank[])
 				if (adjacency_matrix[j][i] == 1.0)
                 {
 					int outdegree = 0;
-				 
+
+                    /*
+                     * OPT: this loop can be done ahead of time
+                     * All we want here is the outdegree of node j to get the weighted average
+                     */
 					for(int k = 0; k < GRAPH_ORDER; k++)
                     {
 						if (adjacency_matrix[j][k] == 1.0)
@@ -91,16 +100,18 @@ void calculate_pagerank(double pagerank[])
 							outdegree++;
 						}
 					}
-					new_pagerank[i] += pagerank[j] / (double)outdegree;
+					new_pagerank[i] += pagerank[j] / (double)outdegree; // OPT: lookup table for 1.0/int
 				}
 			}
 		}
- 
+
+        // OPT: parallelize
         for(int i = 0; i < GRAPH_ORDER; i++)
         {
             new_pagerank[i] = DAMPING_FACTOR * new_pagerank[i] + damping_value;
         }
  
+        // OPT: map-reduce
         diff = 0.0;
         for(int i = 0; i < GRAPH_ORDER; i++)
         {
@@ -109,12 +120,14 @@ void calculate_pagerank(double pagerank[])
         max_diff = (max_diff < diff) ? diff : max_diff;
         total_diff += diff;
         min_diff = (min_diff > diff) ? diff : min_diff;
- 
+
+        // OPT: pointer swap
         for(int i = 0; i < GRAPH_ORDER; i++)
         {
             pagerank[i] = new_pagerank[i];
         }
-            
+
+        // OPT: map reduce
         double pagerank_total = 0.0;
         for(int i = 0; i < GRAPH_ORDER; i++)
         {
