@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <omp.h>
+#include <string.h>
 #include <mpi.h>
 
 /// The number of vertices in the graph.
