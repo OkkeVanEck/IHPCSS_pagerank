@@ -5,10 +5,11 @@ BIN_DIR=bin
 default: all
 
 all: create_directory \
-	 $(BIN_DIR)/main
+	 $(BIN_DIR)/main \
+	 $(BIN_DIR)/min
 
 create_directory:
 	@mkdir -p $(BIN_DIR)
 
-bin/main: src/main.c
-	$(CC) -o $@ $< $(CFLAGS)
+$(BIN_DIR)/%: src/%.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $<
