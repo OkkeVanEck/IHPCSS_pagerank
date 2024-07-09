@@ -21,15 +21,13 @@
 // For comparison with others
 #define MAX_ITERATIONS 999999999999
 
-typedef char bool;
-
 /**
  * @brief Indicates which vertices are connected.
  * @details If an edge links vertex A to vertex B, then adjacency_matrix[A][B]
  * will be 1.0. The absence of edge is represented with value 0.0.
  * Redundant edges are still represented with value 1.0.
  */
-bool adjacency_matrix[GRAPH_ORDER][GRAPH_ORDER];
+double adjacency_matrix[GRAPH_ORDER][GRAPH_ORDER];
 double max_diff = 0.0;
 double min_diff = 1.0;
 double total_diff = 0.0;
@@ -49,7 +47,7 @@ void initialize_graph(void) {
 void calculate_pagerank(double pagerank[]) {
     // Initialise all vertices to 1/n.
     __m256d initial_rank = _mm256_set1_pd(1.0 / GRAPH_ORDER);
-    __m256d damping_value = _mm256_set1_pd((1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
+    __m256d damping_value = _mm256_set_pd(0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
 
     for (int i = 0; i < GRAPH_ORDER; i += 4) {
         _mm256_store_pd(&pagerank[i], initial_rank);
@@ -57,8 +55,6 @@ void calculate_pagerank(double pagerank[]) {
     
     double diff = 1.0;
     size_t iteration = 0;
-    double start = omp_get_wtime();
-    double elapsed = omp_get_wtime() - start;
     double time_per_iteration = 0;
 
     double *new_pagerank;
@@ -90,17 +86,15 @@ void calculate_pagerank(double pagerank[]) {
         }
     }
 
+    double start = omp_get_wtime();
+    double elapsed = 0;
+
     // If we exceeded the MAX_TIME seconds, we stop. If we typically spend X seconds on an iteration, and we are less than X seconds away from MAX_TIME, we stop.
     while (elapsed < MAX_TIME && (elapsed + time_per_iteration) < MAX_TIME && iteration < MAX_ITERATIONS) {
         double iteration_start = omp_get_wtime();
 
-        // TODO this loop can be removed if damping is done somewhere else
-        for (int i = 0; i < GRAPH_ORDER; i += 4) {
-            _mm256_store_pd(&new_pagerank[i], damping_value);
-        }
-
         for (int i = 0; i < GRAPH_ORDER; i++) {
-            __m256d sum = _mm256_setzero_pd(); // TODO: put the damping value here or where the temps are summed
+            __m256d sum = damping_value;
 
             for (int j = 0; j < GRAPH_ORDER; j+=4) {
                 __m256d pr = _mm256_loadu_pd(&pagerank[j]); // reads pagerank[j,...j+3]
@@ -115,10 +109,10 @@ void calculate_pagerank(double pagerank[]) {
             // Ew but idk a better way
             double temp[4];
             _mm256_storeu_pd(temp, sum);
-            new_pagerank[i] += temp[0] + temp[1] + temp[2] + temp[3];
+            new_pagerank[i] = temp[0] + temp[1] + temp[2] + temp[3];
         }
 
-        // OPT: map-reduce
+        // TODO vectorize or remove
         diff = 0.0;
         for (int i = 0; i < GRAPH_ORDER; i++) {
             diff += fabs(new_pagerank[i] - pagerank[i]);
@@ -134,7 +128,7 @@ void calculate_pagerank(double pagerank[]) {
             new_pagerank = tmp;
         }
 
-        // TODO vectorize
+        // TODO vectorize or just remove
         double pagerank_total = 0.0;
         for (int i = 0; i < GRAPH_ORDER; i++) {
             pagerank_total += pagerank[i];
