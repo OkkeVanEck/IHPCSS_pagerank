@@ -52,8 +52,6 @@ void calculate_pagerank(double pagerank[])
 {
     double damping_value = (1.0 - DAMPING_FACTOR) / GRAPH_ORDER;
     size_t iteration = 0;
-    double start = omp_get_wtime();
-    double elapsed = omp_get_wtime() - start;
 
     // Analytical solution possible when first element is known
     // An overestimation of page_rank[0] -> sum(page_rank) > 1, allowing binary search
@@ -102,9 +100,6 @@ void calculate_pagerank(double pagerank[])
             low = mid; // underestimation
         }
     }
-
-    elapsed = omp_get_wtime() - start;
-    printf("completed in %.2f seconds\n", elapsed);
 }
 
 /**
@@ -168,20 +163,20 @@ int main(int argc, char* argv[])
     /// The array in which each vertex pagerank is stored.
     double pagerank[GRAPH_ORDER];
     calculate_pagerank(pagerank);
- 
+
     // Calculates the sum of all pageranks. It should be 1.0, so it can be used as a quick verification.
     double sum_ranks = 0.0;
     for(int i = 0; i < GRAPH_ORDER; i++)
     {
         if(i % 100 == 0)
         {
-            printf("%d,%.12f\n", i, pagerank[i]);
+            printf("PageRank of vertex %d: %.6f\n", i, pagerank[i]);
         }
         sum_ranks += pagerank[i];
     }
     printf("Sum of all pageranks = %.12f, total diff = %.12f, max diff = %.12f and min diff = %.12f.\n", sum_ranks, total_diff, max_diff, min_diff);
     double end = omp_get_wtime();
- 
+
     printf("Total time taken: %.2f seconds.\n", end - start);
  
     return 0;

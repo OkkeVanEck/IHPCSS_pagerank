@@ -6,7 +6,7 @@ default: all
 
 all: create_directory \
 	 $(BIN_DIR)/main \
-	 $(BIN_DIR)/min
+	 $(BIN_DIR)/analytical
 
 create_directory:
 	@mkdir -p $(BIN_DIR)
