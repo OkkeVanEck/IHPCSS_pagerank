@@ -1,5 +1,5 @@
 CC=mpicc
-CFLAGS=-O2 -Wall -fopenmp -lm -mavx
+CFLAGS=-O2 -Wall -fopenmp -lm -mavx -mavx512f -DAVX512
 BIN_DIR=bin
 
 default: all

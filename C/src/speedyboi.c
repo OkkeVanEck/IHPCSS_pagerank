@@ -16,10 +16,20 @@
 /// Parameters used in pagerank convergence, do not change.
 #define DAMPING_FACTOR 0.85
 /// The number of seconds to not exceed forthe calculation loop.
-#define MAX_TIME 1
+#define MAX_TIME 10
 
 // For comparison with others
 #define MAX_ITERATIONS 999999999999
+
+#ifdef AVX512
+    #define VECCALL(fn) _mm512_ ## fn
+    #define VECDTYPE __m512d
+#else
+    #define VECCALL(fn) _mm256_ ## fn
+    #define VECDTYPE __m256d
+#endif
+
+#define VECWIDTH (sizeof( VECDTYPE ) / sizeof(double))
 
 /**
  * @brief Indicates which vertices are connected.
@@ -46,11 +56,15 @@ void initialize_graph(void) {
  */
 void calculate_pagerank(double pagerank[]) {
     // Initialise all vertices to 1/n.
-    __m256d initial_rank = _mm256_set1_pd(1.0 / GRAPH_ORDER);
-    __m256d damping_value = _mm256_set_pd(0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
+    VECDTYPE initial_rank = VECCALL(set1_pd)(1.0 / GRAPH_ORDER);
+#ifdef AVX512
+    VECDTYPE damping_value = _mm512_set_pd(0, 0, 0, 0, 0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
+#else
+    VECDTYPE damping_value = _mm256_set_pd(0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
+#endif
 
-    for (int i = 0; i < GRAPH_ORDER; i += 4) {
-        _mm256_store_pd(&pagerank[i], initial_rank);
+    for (int i = 0; i < GRAPH_ORDER; i += VECWIDTH) {
+        VECCALL(store_pd)(&pagerank[i], initial_rank);
     }
     
     double diff = 1.0;
@@ -62,13 +76,14 @@ void calculate_pagerank(double pagerank[]) {
 
     // Convert the graph representation to a transition matrix
     // This removes a memory access, a division and a branch from the main loop, and a whole second loop to apply damping
-    __m256d (*transition_matrix)[GRAPH_ORDER/4][GRAPH_ORDER];
-    posix_memalign((void**)&transition_matrix, 32, GRAPH_ORDER * GRAPH_ORDER / 4 * sizeof(__m256d));
+    VECDTYPE (*transition_matrix)[GRAPH_ORDER/VECWIDTH][GRAPH_ORDER];
+    posix_memalign((void**)&transition_matrix, 32, GRAPH_ORDER * GRAPH_ORDER * sizeof(double));
     for (int i = 0; i < GRAPH_ORDER; i++) {
-        for (int j = 0; j < GRAPH_ORDER; j+=4) {
+        for (int j = 0; j < GRAPH_ORDER; j+=VECWIDTH) {
             // Glue 4 values together for vectorization
-            double vector[4];
-            for (int offset = 0; offset < 4; offset++) {
+            // This isn't strictly necessary as transition_matrix is still GRAPH_ORDER * GRAPH_ORDER * sizeof(double) but makes it a bit easier to work with
+            double vector[VECWIDTH];
+            for (int offset = 0; offset < VECWIDTH; offset++) {
                 if (adjacency_matrix[j + offset][i]) {
                     // This loop can be lifted
                     int outdegree = 0;
@@ -82,7 +97,7 @@ void calculate_pagerank(double pagerank[]) {
                 }
             }
 
-            (*transition_matrix)[j/4][i] = _mm256_set_pd(vector[3], vector[2], vector[1], vector[0]);
+            (*transition_matrix)[j/VECWIDTH][i] = VECCALL(loadu_pd)(vector);
         }
     }
 
@@ -94,22 +109,26 @@ void calculate_pagerank(double pagerank[]) {
         double iteration_start = omp_get_wtime();
 
         for (int i = 0; i < GRAPH_ORDER; i++) {
-            __m256d sum = damping_value;
+            VECDTYPE sum = damping_value;
 
-            for (int j = 0; j < GRAPH_ORDER; j+=4) {
-                __m256d pr = _mm256_loadu_pd(&pagerank[j]); // reads pagerank[j,...j+3]
+            for (int j = 0; j < GRAPH_ORDER; j+=VECWIDTH) {
+                VECDTYPE pr = VECCALL(loadu_pd)(&pagerank[j]); // reads pagerank[j,...j+3]
 
                 // adj0 can be stored directly in the transition matrix
-                __m256d adj0 = (*transition_matrix)[j/4][i];
-                __m256d mul = _mm256_mul_pd(pr, adj0);
-                sum = _mm256_add_pd(sum, mul);
+                VECDTYPE adj0 = (*transition_matrix)[j/VECWIDTH][i];
+                VECDTYPE mul = VECCALL(mul_pd)(pr, adj0);
+                sum = VECCALL(add_pd)(sum, mul);
             }
 
             // Horizontally sum the 4 elements in the AVX register
-            // Ew but idk a better way
-            double temp[4];
-            _mm256_storeu_pd(temp, sum);
+            // Ew but idk a better way, can probably be optimized
+            double temp[VECWIDTH];
+            VECCALL(storeu_pd)(temp, sum);
+#ifdef AVX512
+            new_pagerank[i] = temp[0] + temp[1] + temp[2] + temp[3] + temp[4] + temp[5] + temp[6] + temp[7];
+#else
             new_pagerank[i] = temp[0] + temp[1] + temp[2] + temp[3];
+#endif
         }
 
         // TODO vectorize or remove
