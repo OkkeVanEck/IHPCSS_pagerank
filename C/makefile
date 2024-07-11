@@ -12,7 +12,8 @@ all: create_directory \
 	 $(BIN_DIR)/analytical \
 	 $(BIN_DIR)/speedyboi \
 	 $(BIN_DIR)/speedyboi512 \
-	 $(BIN_DIR)/speedyboi-portable
+	 $(BIN_DIR)/speedyboi-portable \
+	 $(BIN_DIR)/speedyboi-novec
 
 create_directory:
 	@mkdir -p $(BIN_DIR)
