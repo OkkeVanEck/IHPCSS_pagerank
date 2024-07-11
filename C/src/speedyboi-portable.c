@@ -1,5 +1,5 @@
 /**
- * @brief Implements all the basic optimizations while still doing iterations
+ * @brief Implements all the basic optimizations while still doing iterations, without intrinsics
  **/
 
 #include <stdio.h>
@@ -9,27 +9,21 @@
 #include <string.h>
 #include <mpi.h>
 
-#include <immintrin.h>
-
 /// The number of vertices in the graph.
 #define GRAPH_ORDER 1000
 /// Parameters used in pagerank convergence, do not change.
 #define DAMPING_FACTOR 0.85
 /// The number of seconds to not exceed forthe calculation loop.
 #define MAX_TIME 10
-
 // For comparison with others
 #define MAX_ITERATIONS 999999999999
 
-#ifdef AVX512
-    #define VECCALL(fn) _mm512_ ## fn
-    #define VECDTYPE __m512d
-#else
-    #define VECCALL(fn) _mm256_ ## fn
-    #define VECDTYPE __m256d
-#endif
+// No SIMD instructions are used explicitly
+#define VECWIDTH 4
 
-#define VECWIDTH (sizeof( VECDTYPE ) / sizeof(double))
+typedef struct {
+    double d[VECWIDTH];
+} vec_t;
 
 /**
  * @brief Indicates which vertices are connected.
@@ -56,15 +50,12 @@ void initialize_graph(void) {
  */
 void calculate_pagerank(double pagerank[]) {
     // Initialise all vertices to 1/n.
-    VECDTYPE initial_rank = VECCALL(set1_pd)(1.0 / GRAPH_ORDER);
-#ifdef AVX512
-    VECDTYPE damping_value = _mm512_set_pd(0, 0, 0, 0, 0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
-#else
-    VECDTYPE damping_value = _mm256_set_pd(0, 0, 0, (1.0 - DAMPING_FACTOR) / GRAPH_ORDER);
-#endif
+    vec_t initial_rank = {{ [0 ... VECWIDTH-1] = 1.0 / GRAPH_ORDER }};
+    vec_t damping_value = {{ [0 ... VECWIDTH-2] = 0, [VECWIDTH-1] = (1.0 - DAMPING_FACTOR) / GRAPH_ORDER }};
 
     for (int i = 0; i < GRAPH_ORDER; i += VECWIDTH) {
-        VECCALL(store_pd)(&pagerank[i], initial_rank);
+        for (int vi = 0; vi < VECWIDTH; vi++)
+            pagerank[i + vi] = initial_rank.d[vi];
     }
     
     double diff = 1.0;
@@ -76,14 +67,13 @@ void calculate_pagerank(double pagerank[]) {
 
     // Convert the graph representation to a transition matrix
     // This removes a memory access, a division and a branch from the main loop, and a whole second loop to apply damping
-    VECDTYPE (*transition_matrix)[GRAPH_ORDER/VECWIDTH][GRAPH_ORDER];
+    vec_t (*transition_matrix)[GRAPH_ORDER/VECWIDTH][GRAPH_ORDER];
     posix_memalign((void**)&transition_matrix, 32, GRAPH_ORDER * GRAPH_ORDER * sizeof(double));
 
     for (int i = 0; i < GRAPH_ORDER; i++) {
         for (int j = 0; j < GRAPH_ORDER; j+=VECWIDTH) {
-            // Glue 4 values together for vectorization
-            // This isn't strictly necessary as transition_matrix is still GRAPH_ORDER * GRAPH_ORDER * sizeof(double) but makes it a bit easier to work with
-            double vector[VECWIDTH];
+            // Glue values together _implicit_ for vectorization
+            vec_t vector;
             for (int offset = 0; offset < VECWIDTH; offset++) {
                 if (adjacency_matrix[j + offset][i]) {
                     // This loop can be lifted
@@ -92,13 +82,13 @@ void calculate_pagerank(double pagerank[]) {
                         if (adjacency_matrix[j+offset][k])
                             outdegree++;
                     }
-                    vector[offset] = DAMPING_FACTOR / outdegree;
+                    vector.d[offset] = DAMPING_FACTOR / outdegree;
                 } else {
-                    vector[offset] = 0;
+                    vector.d[offset] = 0;
                 }
             }
 
-            (*transition_matrix)[j/VECWIDTH][i] = VECCALL(loadu_pd)(vector);
+            (*transition_matrix)[j/VECWIDTH][i] = vector;
         }
     }
 
@@ -109,28 +99,29 @@ void calculate_pagerank(double pagerank[]) {
     while (elapsed < MAX_TIME && (elapsed + time_per_iteration) < MAX_TIME && iteration < MAX_ITERATIONS) {
         double iteration_start = omp_get_wtime();
 
-#pragma omp parallel for
+// #pragma omp parallel for
         for (int i = 0; i < GRAPH_ORDER; i++) {
-            VECDTYPE sum = damping_value;
+            vec_t sum = damping_value;
 
             for (int j = 0; j < GRAPH_ORDER; j+=VECWIDTH) {
-                VECDTYPE pr = VECCALL(loadu_pd)(&pagerank[j]); // reads pagerank[j,...j+3]
+                vec_t pr;
+                for (int vi = 0; vi < VECWIDTH; vi++)
+                    pr.d[vi] = pagerank[j+vi];
 
-                // adj0 can be stored directly in the transition matrix
-                VECDTYPE adj0 = (*transition_matrix)[j/VECWIDTH][i];
-                VECDTYPE mul = VECCALL(mul_pd)(pr, adj0);
-                sum = VECCALL(add_pd)(sum, mul);
+                vec_t val = (*transition_matrix)[j/VECWIDTH][i];
+
+                // this is a FMA after all ...
+                for (int vi = 0; vi < VECWIDTH; vi++)
+                    val.d[vi] *= pr.d[vi];
+                for (int vi = 0; vi < VECWIDTH; vi++)
+                    sum.d[vi] += val.d[vi];
             }
 
             // Horizontally sum the 4 elements in the AVX register
-            // Ew but idk a better way, can probably be optimized
-            double temp[VECWIDTH];
-            VECCALL(storeu_pd)(temp, sum);
-#ifdef AVX512
-            new_pagerank[i] = temp[0] + temp[1] + temp[2] + temp[3] + temp[4] + temp[5] + temp[6] + temp[7];
-#else
-            new_pagerank[i] = temp[0] + temp[1] + temp[2] + temp[3];
-#endif
+            double sum_val = 0;
+            for (int vi = 0; vi < VECWIDTH; vi++)
+                sum_val += sum.d[vi];
+            new_pagerank[i] = sum_val;
         }
 
         // TODO vectorize or remove
