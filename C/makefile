@@ -9,21 +9,13 @@ clean:
 
 all: create_directory \
 	 $(BIN_DIR)/main \
-	 $(BIN_DIR)/analytical \
-	 $(BIN_DIR)/speedyboi \
-	 $(BIN_DIR)/speedyboi512 \
-	 $(BIN_DIR)/speedyboi-portable \
-	 $(BIN_DIR)/speedyboi-novec \
-	 $(BIN_DIR)/speedyboi-gpu
+	 $(BIN_DIR)/speedyboi
 
 create_directory:
 	@mkdir -p $(BIN_DIR)
 
 $(BIN_DIR)/speedyboi: src/speedyboi.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -mavx -o $@ $<
-
-$(BIN_DIR)/speedyboi512: src/speedyboi.c | $(BIN_DIR)
-	$(CC) $(CFLAGS) -mavx512f -DAVX512 -o $@ $<
 
 $(BIN_DIR)/%: src/%.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $<
