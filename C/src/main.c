@@ -14,7 +14,7 @@
 /// Parameters used in pagerank convergence, do not change.
 #define DAMPING_FACTOR 0.85
 /// The number of seconds to not exceed forthe calculation loop.
-#define MAX_TIME 2
+#define MAX_TIME 10
 // For comparison with others
 #define MAX_ITERATIONS 999999999999
 
