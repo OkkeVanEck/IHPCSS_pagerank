@@ -14,7 +14,7 @@
 /// Parameters used in pagerank convergence, do not change.
 #define DAMPING_FACTOR 0.85
 /// The number of seconds to not exceed forthe calculation loop.
-#define MAX_TIME 10
+#define MAX_TIME 2
 // For comparison with others
 #define MAX_ITERATIONS 999999999999
 
@@ -86,13 +86,13 @@ void calculate_pagerank(double pagerank[]) {
     while (elapsed < MAX_TIME && (elapsed + time_per_iteration) < MAX_TIME && iteration < MAX_ITERATIONS) {
         double iteration_start = omp_get_wtime();
 
-// #pragma omp parallel for
+#pragma omp parallel for schedule(static)
         for (int i = 0; i < GRAPH_ORDER; i++) {
             double sum = damping_value;
 
-            // TODO: omp simd
+            // #pragma omp parallel for simd
             for (int j = 0; j < GRAPH_ORDER; j++)
-                sum += (*transition_matrix)[j][i] * pagerank[j];
+                sum += (*transition_matrix)[i][j] * pagerank[j];
             new_pagerank[i] = sum;
         }
 
