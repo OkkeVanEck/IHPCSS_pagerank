@@ -76,7 +76,7 @@ void calculate_pagerank(double pagerank[]) {
 
     // Convert the graph representation to a transition matrix
     // This removes a memory access, a division and a branch from the main loop, and a whole second loop to apply damping
-    VECDTYPE (*transition_matrix)[GRAPH_ORDER/VECWIDTH][GRAPH_ORDER];
+    VECDTYPE (*transition_matrix)[GRAPH_ORDER][GRAPH_ORDER/VECWIDTH];
     posix_memalign((void**)&transition_matrix, 32, GRAPH_ORDER * GRAPH_ORDER * sizeof(double));
 
     for (int i = 0; i < GRAPH_ORDER; i++) {
@@ -98,7 +98,7 @@ void calculate_pagerank(double pagerank[]) {
                 }
             }
 
-            (*transition_matrix)[j/VECWIDTH][i] = VECCALL(loadu_pd)(vector);
+            (*transition_matrix)[i][j/VECWIDTH] = VECCALL(loadu_pd)(vector);
         }
     }
 
@@ -109,7 +109,7 @@ void calculate_pagerank(double pagerank[]) {
     while (elapsed < MAX_TIME && (elapsed + time_per_iteration) < MAX_TIME && iteration < MAX_ITERATIONS) {
         double iteration_start = omp_get_wtime();
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
         for (int i = 0; i < GRAPH_ORDER; i++) {
             VECDTYPE sum = damping_value;
 
@@ -117,7 +117,7 @@ void calculate_pagerank(double pagerank[]) {
                 VECDTYPE pr = VECCALL(loadu_pd)(&pagerank[j]); // reads pagerank[j,...j+3]
 
                 // adj0 can be stored directly in the transition matrix
-                VECDTYPE adj0 = (*transition_matrix)[j/VECWIDTH][i];
+                VECDTYPE adj0 = (*transition_matrix)[i][j/VECWIDTH];
                 VECDTYPE mul = VECCALL(mul_pd)(pr, adj0);
                 sum = VECCALL(add_pd)(sum, mul);
             }
