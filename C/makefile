@@ -1,5 +1,5 @@
 CC=mpicc
-CFLAGS=-O2 -Wall -fopenmp -lm -mavx
+CFLAGS=-O2 -Wall -fopenmp -lm
 BIN_DIR=bin
 
 default: all
@@ -13,10 +13,14 @@ all: create_directory \
 	 $(BIN_DIR)/speedyboi \
 	 $(BIN_DIR)/speedyboi512 \
 	 $(BIN_DIR)/speedyboi-portable \
-	 $(BIN_DIR)/speedyboi-novec
+	 $(BIN_DIR)/speedyboi-novec \
+	 $(BIN_DIR)/speedyboi-gpu
 
 create_directory:
 	@mkdir -p $(BIN_DIR)
+
+$(BIN_DIR)/speedyboi: src/speedyboi.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -mavx -o $@ $<
 
 $(BIN_DIR)/speedyboi512: src/speedyboi.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -mavx512f -DAVX512 -o $@ $<
