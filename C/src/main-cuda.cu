@@ -11,6 +11,7 @@
 #include <string.h>
 #include <cub/block/block_reduce.cuh>
 #include <iostream>
+#include <memory>
 
 /// The number of vertices in the graph.
 constexpr int GRAPH_ORDER = 1000;
@@ -19,7 +20,14 @@ constexpr double DAMPING_FACTOR = 0.85;
 /// The number of seconds to not exceed forthe calculation loop.
 constexpr int MAX_TIME = 10;
 // For comparison with others
-constexpr int MAX_ITERATIONS = 1'000'000'000;
+// constexpr int MAX_ITERATIONS = 1'000'000'000;
+constexpr int MAX_ITERATIONS = 1;
+
+// Define a custom deleter for cudaFree
+struct CudaFreeDeleter
+{
+  void operator()(double *ptr) const { cudaFree(ptr); }
+};
 
 // Error checking macro
 #define CHECK_CUDA(call)                                                                                                \
@@ -141,17 +149,32 @@ void calculate_pagerank(double pagerank[])
   // Calculate grid size to cover the whole data set
   int gridSize = (GRAPH_ORDER + blockSize - 1) / blockSize;
 
-  double *d_pagerank, *d_new_pagerank, *d_transition_matrix, *d_diff;
-  CHECK_CUDA(cudaMalloc((void **)&d_pagerank, GRAPH_ORDER * sizeof(double)));
-  CHECK_CUDA(cudaMalloc((void **)&d_new_pagerank, GRAPH_ORDER * sizeof(double)));
-  CHECK_CUDA(cudaMalloc((void **)&d_transition_matrix, GRAPH_ORDER * GRAPH_ORDER * sizeof(double)));
-  CHECK_CUDA(cudaMalloc((void **)&d_diff, GRAPH_ORDER * sizeof(double)));
+  // Use unique_ptr for device memory management
+  std::unique_ptr<double[], CudaFreeDeleter> d_pagerank(nullptr);
+  std::unique_ptr<double[], CudaFreeDeleter> d_new_pagerank(nullptr);
+  std::unique_ptr<double[], CudaFreeDeleter> d_transition_matrix(nullptr);
+  std::unique_ptr<double[], CudaFreeDeleter> d_diff(nullptr);
+  {
+    double *ptr;
+    CHECK_CUDA(cudaMalloc((void **)&ptr, GRAPH_ORDER * sizeof(double)));
+    d_pagerank.reset(ptr);
 
-  CHECK_CUDA(cudaMemcpy(d_pagerank, pagerank, GRAPH_ORDER * sizeof(double), cudaMemcpyHostToDevice));
-  CHECK_CUDA(cudaMemset(d_new_pagerank, 0, GRAPH_ORDER * sizeof(double)));
-  CHECK_CUDA(cudaMemcpy(d_transition_matrix, transition_matrix, GRAPH_ORDER * GRAPH_ORDER * sizeof(double), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMalloc((void **)&ptr, GRAPH_ORDER * sizeof(double)));
+    d_new_pagerank.reset(ptr);
 
-  initializeArrayValue<double><<<gridSize, blockSize>>>(d_pagerank, initial_rank, GRAPH_ORDER);
+    CHECK_CUDA(cudaMalloc((void **)&ptr, GRAPH_ORDER * GRAPH_ORDER * sizeof(double)));
+    d_transition_matrix.reset(ptr);
+
+    CHECK_CUDA(cudaMalloc((void **)&ptr, GRAPH_ORDER * sizeof(double)));
+    d_diff.reset(ptr);
+  }
+
+  CHECK_CUDA(cudaMemcpy(d_pagerank.get(), pagerank, GRAPH_ORDER * sizeof(double), cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemset(d_new_pagerank.get(), 0, GRAPH_ORDER * sizeof(double)));
+  CHECK_CUDA(
+      cudaMemcpy(d_transition_matrix.get(), transition_matrix, GRAPH_ORDER * GRAPH_ORDER * sizeof(double), cudaMemcpyHostToDevice));
+
+  initializeArrayValue<double><<<gridSize, blockSize>>>(d_pagerank.get(), initial_rank, GRAPH_ORDER);
   CHECK_CUDA(cudaDeviceSynchronize());
   CHECK_CUDA(cudaGetLastError());
 
@@ -168,35 +191,31 @@ void calculate_pagerank(double pagerank[])
     {
       double iteration_start = omp_get_wtime();
 
-      initializeArrayValue<double><<<gridSize, blockSize>>>(d_new_pagerank, 1., GRAPH_ORDER);
+      initializeArrayValue<double><<<gridSize, blockSize>>>(d_new_pagerank.get(), 1., GRAPH_ORDER);
       CHECK_CUDA(cudaDeviceSynchronize());
       CHECK_CUDA(cudaGetLastError());
 
       // Perform the matrix-vector multiplication: y = A * x
       constexpr double alpha = 1.0;
-      CHECK_CUBLAS(cublasDgemv(handle, CUBLAS_OP_N, GRAPH_ORDER, GRAPH_ORDER, &alpha, d_transition_matrix, GRAPH_ORDER, d_pagerank, 1,
-                               &damping_value, d_new_pagerank, 1));
+      CHECK_CUBLAS(cublasDgemv(handle, CUBLAS_OP_N, GRAPH_ORDER, GRAPH_ORDER, &alpha, d_transition_matrix.get(), GRAPH_ORDER,
+                               d_pagerank.get(), 1, &damping_value, d_new_pagerank.get(), 1));
 
       diff = 0.0;
-      elementWiseFabs<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_new_pagerank, d_pagerank, d_diff, GRAPH_ORDER);
+      elementWiseFabs<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_new_pagerank.get(), d_pagerank.get(), d_diff.get(), GRAPH_ORDER);
       CHECK_CUDA(cudaDeviceSynchronize());
       CHECK_CUDA(cudaGetLastError());
-      CHECK_CUBLAS(cublasDasum(handle, GRAPH_ORDER, d_diff, 1, &diff));
+      CHECK_CUBLAS(cublasDasum(handle, GRAPH_ORDER, d_diff.get(), 1, &diff));
 
       max_diff = (max_diff < diff) ? diff : max_diff;
       total_diff += diff;
       min_diff = (min_diff > diff) ? diff : min_diff;
 
       // Swap the buffers
-      {
-        double *d_tmp  = d_pagerank;
-        d_pagerank     = d_new_pagerank;
-        d_new_pagerank = d_tmp;
-      }
+      d_pagerank.swap(d_new_pagerank);
 
       double pagerank_total = 0.0;
 
-      CHECK_CUBLAS(cublasDasum(handle, GRAPH_ORDER, d_pagerank, 1, &pagerank_total));
+      CHECK_CUBLAS(cublasDasum(handle, GRAPH_ORDER, d_pagerank.get(), 1, &pagerank_total));
       if(fabs(pagerank_total - 1.0) >= 1E-12)
         {
           printf("[ERROR] Iteration %zu: sum of all pageranks is not 1 but %.12f.\n", iteration, pagerank_total);
@@ -208,13 +227,9 @@ void calculate_pagerank(double pagerank[])
       time_per_iteration = iteration_end - iteration_start;
     }
 
-  CHECK_CUDA(cudaMemcpy(pagerank, d_pagerank, GRAPH_ORDER * sizeof(double), cudaMemcpyDeviceToHost));
+  CHECK_CUDA(cudaMemcpy(pagerank, d_pagerank.get(), GRAPH_ORDER * sizeof(double), cudaMemcpyDeviceToHost));
 
   CHECK_CUBLAS(cublasDestroy(handle));
-  CHECK_CUDA(cudaFree(d_pagerank));
-  CHECK_CUDA(cudaFree(d_new_pagerank));
-  CHECK_CUDA(cudaFree(d_transition_matrix));
-  CHECK_CUDA(cudaFree(d_diff));
 
   printf("%zu iterations achieved in %.2f seconds\n", iteration, elapsed);
 }
@@ -282,15 +297,14 @@ int main(int argc, char *argv[])
   generate_sneaky_graph();
 
   /// The array in which each vertex pagerank is stored. Make sure its aligned for simd
-  double *pagerank;
-  pagerank = (double *)malloc(GRAPH_ORDER * sizeof(double));
+  auto pagerank = std::make_unique<double[]>(GRAPH_ORDER);
 
   for(int i = 0; i < GRAPH_ORDER; i++)
     {
       pagerank[i] = 0;
     }
 
-  calculate_pagerank(pagerank);
+  calculate_pagerank(pagerank.get());
 
   // Calculates the sum of all pageranks. It should be 1.0, so it can be used as a quick verification.
   double sum_ranks = 0.0;
