@@ -75,7 +75,7 @@ void calculate_pagerank(double pagerank[]) {
             } else {
                 val = 0;
             }
-            (*transition_matrix)[j][i] = val;
+            (*transition_matrix)[i][j] = val;
         }
     }
 
